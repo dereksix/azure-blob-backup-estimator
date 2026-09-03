@@ -1,0 +1,10 @@
+# Generated assessment data can contain customer identifiers and inventory.
+Azure-blob-backup-assessment-*/
+azure-blob-backup-results/
+account-results/
+preflight.csv
+account-sizing.csv
+cost-scenarios.csv
+pricing-evidence.json
+summary.json
+*.zip
