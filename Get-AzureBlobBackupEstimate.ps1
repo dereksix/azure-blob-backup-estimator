@@ -122,8 +122,12 @@ function Invoke-StorageList {
         }
         catch {
             $statusCode = $null
-            if ($_.Exception.Response) {
-                $statusCode = [int]$_.Exception.Response.StatusCode
+            $responseProperty = $_.Exception.PSObject.Properties["Response"]
+            if ($responseProperty -and $null -ne $responseProperty.Value) {
+                $statusCodeProperty = $responseProperty.Value.PSObject.Properties["StatusCode"]
+                if ($statusCodeProperty) {
+                    $statusCode = [int]$statusCodeProperty.Value
+                }
             }
 
             if ($statusCode -eq 401) {
@@ -480,7 +484,7 @@ $prefixClause
 
 $graphArguments = @(
     "graph", "query",
-    "--query", $query,
+    "-q", $query,
     "--first", "1000",
     "--output", "json",
     "--only-show-errors",

@@ -52,6 +52,11 @@ flowchart LR
 - An authenticated Azure CLI session
 - Network and DNS connectivity to storage private endpoints, when applicable
 
+Azure Cloud Shell supports the preflight and smaller assessments. For large
+estates, use a persistent PowerShell 7 host because a full metadata inventory
+can outlast a Cloud Shell session. Rerunning with the same output directory
+resumes from completed account checkpoints.
+
 Required Azure roles on every target subscription:
 
 | Role | Purpose |
