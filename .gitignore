@@ -7,4 +7,5 @@ account-sizing.csv
 cost-scenarios.csv
 pricing-evidence.json
 summary.json
+azure-blob-backup-subscriptions*.json
 *.zip

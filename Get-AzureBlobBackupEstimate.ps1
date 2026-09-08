@@ -5,10 +5,11 @@
 Measures active Azure blobs and estimates Azure Blob vaulted-backup costs.
 
 .DESCRIPTION
-Runs a metadata-only preflight and inventory against explicitly selected Azure
-subscriptions. The full scan measures active BlockBlob, AppendBlob, and PageBlob
-objects, retrieves current Microsoft retail rates, and creates configurable
-retention and daily-churn cost scenarios.
+Runs a metadata-only preflight and inventory against explicitly selected,
+interactively selected, or all enabled Azure subscriptions in the active tenant.
+The full scan measures active BlockBlob, AppendBlob, and PageBlob objects,
+retrieves current Microsoft retail rates, and creates configurable retention and
+daily-churn cost scenarios.
 
 .EXAMPLE
 pwsh ./Get-AzureBlobBackupEstimate.ps1 `
@@ -24,6 +25,20 @@ pwsh ./Get-AzureBlobBackupEstimate.ps1 `
   -FullScan `
   -OutputDirectory ./azure-blob-backup-results
 
+.EXAMPLE
+pwsh ./Get-AzureBlobBackupEstimate.ps1 `
+  -AllEnabledSubscriptions `
+  -ExpectedAccountCount 25 `
+  -PreflightOnly `
+  -OutputDirectory ./azure-blob-backup-results
+
+.EXAMPLE
+pwsh ./Get-AzureBlobBackupEstimate.ps1 `
+  -PreflightOnly `
+  -OutputDirectory ./azure-blob-backup-results
+
+Displays an interactive picker for enabled subscriptions in the active tenant.
+
 .NOTES
 Generated output can contain Azure resource identifiers and must not be
 committed to a public repository.
@@ -31,9 +46,10 @@ committed to a public repository.
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
-    [string[]]$SubscriptionId,
+    [string[]]$SubscriptionId = @(),
+    [switch]$AllEnabledSubscriptions,
+    [string]$SubscriptionFile = "",
     [string]$AccountNamePrefix = "",
     [ValidateRange(0, 1000000)]
     [int]$ExpectedAccountCount = 0,
@@ -56,6 +72,9 @@ if ($PreflightOnly -and $FullScan) {
 }
 if (-not $PreflightOnly -and -not $FullScan) {
     throw "Specify -PreflightOnly first. After it passes, rerun with -FullScan."
+}
+if ($AllEnabledSubscriptions -and $SubscriptionId.Count -gt 0) {
+    throw "Use either -SubscriptionId or -AllEnabledSubscriptions, not both."
 }
 
 $requiredRoles = @(
@@ -439,17 +458,133 @@ $tenantSubscriptions = @(
             $_.tenantId -eq $accountContext.tenantId
         }
 )
+if ($tenantSubscriptions.Count -eq 0) {
+    throw "No enabled subscriptions are available in the active tenant."
+}
+
+if (-not $SubscriptionFile) {
+    $SubscriptionFile = Join-Path $PSScriptRoot "azure-blob-backup-subscriptions.json"
+}
+$SubscriptionFile = [IO.Path]::GetFullPath($SubscriptionFile)
 
 $resolvedSubscriptions = [System.Collections.Generic.List[object]]::new()
-foreach ($requestedSubscriptionId in $SubscriptionId) {
-    $matches = @(
-        $tenantSubscriptions |
-            Where-Object id -eq $requestedSubscriptionId
-    )
-    if ($matches.Count -ne 1) {
-        throw "Subscription '$requestedSubscriptionId' isn't uniquely available and enabled in the active tenant."
+if ($AllEnabledSubscriptions) {
+    foreach ($subscription in $tenantSubscriptions) {
+        $resolvedSubscriptions.Add($subscription)
     }
-    $resolvedSubscriptions.Add($matches[0])
+}
+elseif ($SubscriptionId.Count -gt 0) {
+    foreach ($requestedSubscriptionId in $SubscriptionId) {
+        $matches = @(
+            $tenantSubscriptions |
+                Where-Object id -eq $requestedSubscriptionId
+        )
+        if ($matches.Count -ne 1) {
+            throw "Subscription '$requestedSubscriptionId' isn't uniquely available and enabled in the active tenant."
+        }
+        $resolvedSubscriptions.Add($matches[0])
+    }
+}
+elseif (Test-Path -LiteralPath $SubscriptionFile) {
+    $manifest = Get-Content -LiteralPath $SubscriptionFile -Raw | ConvertFrom-Json
+    $tenantProperty = $manifest.PSObject.Properties["tenantId"]
+    if (
+        $tenantProperty -and
+        $tenantProperty.Value -and
+        $tenantProperty.Value -ne $accountContext.tenantId
+    ) {
+        throw "Subscription file '$SubscriptionFile' belongs to tenant '$($tenantProperty.Value)', not the active tenant '$($accountContext.tenantId)'."
+    }
+
+    $subscriptionsProperty = $manifest.PSObject.Properties["subscriptions"]
+    if (-not $subscriptionsProperty) {
+        throw "Subscription file '$SubscriptionFile' doesn't contain a subscriptions array."
+    }
+
+    $manifestSubscriptionIds = @(
+        $subscriptionsProperty.Value |
+            Where-Object {
+                $includeProperty = $_.PSObject.Properties["include"]
+                $includeProperty -and $includeProperty.Value -eq $true
+            } |
+            ForEach-Object id
+    )
+    if ($manifestSubscriptionIds.Count -eq 0) {
+        throw "Subscription file '$SubscriptionFile' doesn't include any subscriptions."
+    }
+
+    foreach ($requestedSubscriptionId in $manifestSubscriptionIds) {
+        $matches = @(
+            $tenantSubscriptions |
+                Where-Object id -eq $requestedSubscriptionId
+        )
+        if ($matches.Count -ne 1) {
+            throw "Subscription '$requestedSubscriptionId' from '$SubscriptionFile' isn't uniquely available and enabled in the active tenant."
+        }
+        $resolvedSubscriptions.Add($matches[0])
+    }
+    Write-Host "Loaded subscription selection from: $SubscriptionFile"
+}
+else {
+    Write-Host "Enabled subscriptions in the active tenant:"
+    for ($index = 0; $index -lt $tenantSubscriptions.Count; $index++) {
+        $subscription = $tenantSubscriptions[$index]
+        Write-Host ("  [{0}] {1} [{2}]" -f ($index + 1), $subscription.name, $subscription.id)
+    }
+
+    $selection = (Read-Host "Select subscription numbers separated by commas, or enter A for all").Trim()
+    if ($selection -match "^(?i:a|all)$") {
+        foreach ($subscription in $tenantSubscriptions) {
+            $resolvedSubscriptions.Add($subscription)
+        }
+    }
+    else {
+        $selectedIndexes = [System.Collections.Generic.List[int]]::new()
+        foreach ($value in $selection.Split(",")) {
+            $selectedIndex = 0
+            if (
+                -not [int]::TryParse($value.Trim(), [ref]$selectedIndex) -or
+                $selectedIndex -lt 1 -or
+                $selectedIndex -gt $tenantSubscriptions.Count
+            ) {
+                throw "Invalid subscription selection '$($value.Trim())'."
+            }
+            if (-not $selectedIndexes.Contains($selectedIndex)) {
+                $selectedIndexes.Add($selectedIndex)
+            }
+        }
+
+        if ($selectedIndexes.Count -eq 0) {
+            throw "Select at least one subscription."
+        }
+        foreach ($selectedIndex in $selectedIndexes) {
+            $resolvedSubscriptions.Add($tenantSubscriptions[$selectedIndex - 1])
+        }
+    }
+
+    $selectedSubscriptionIds = @($resolvedSubscriptions | ForEach-Object id)
+    $manifestDirectory = Split-Path -Parent $SubscriptionFile
+    if ($manifestDirectory) {
+        New-Item -ItemType Directory -Path $manifestDirectory -Force | Out-Null
+    }
+    $subscriptionManifest = [ordered]@{
+        schemaVersion = 1
+        tenantId      = $accountContext.tenantId
+        generatedUtc = (Get-Date).ToUniversalTime().ToString("o")
+        subscriptions = @(
+            $tenantSubscriptions |
+                Sort-Object name |
+                ForEach-Object {
+                    [ordered]@{
+                        id      = $_.id
+                        name    = $_.name
+                        include = $_.id -in $selectedSubscriptionIds
+                    }
+                }
+        )
+    }
+    Write-JsonFile -Value $subscriptionManifest -Path $SubscriptionFile
+    Write-Host "Saved subscription selection to: $SubscriptionFile"
 }
 $subscriptions = @($resolvedSubscriptions | ForEach-Object id)
 

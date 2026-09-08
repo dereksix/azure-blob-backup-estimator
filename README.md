@@ -77,6 +77,36 @@ az login --tenant <tenant-id>
 
 ### 2. Run the mandatory preflight
 
+Run without a subscription argument to select subscriptions interactively:
+
+```powershell
+pwsh ./Get-AzureBlobBackupEstimate.ps1 `
+  -PreflightOnly `
+  -OutputDirectory ./azure-blob-backup-results
+```
+
+Enter comma-separated subscription numbers at the prompt, or enter `A` to use
+all enabled subscriptions in the active tenant. The selection is saved beside
+the script as `azure-blob-backup-subscriptions.json`. Later runs automatically
+reuse that private manifest without prompting. Delete the file to rebuild it,
+or pass `-SubscriptionFile` to use a manifest stored elsewhere.
+
+For a noninteractive tenant-wide run:
+
+```powershell
+pwsh ./Get-AzureBlobBackupEstimate.ps1 `
+  -AllEnabledSubscriptions `
+  -ExpectedAccountCount <expected-account-count> `
+  -PreflightOnly `
+  -OutputDirectory ./azure-blob-backup-results
+```
+
+`ExpectedAccountCount` is strongly recommended with
+`AllEnabledSubscriptions`; it stops the run before preflight if discovery is
+incomplete or unexpectedly broad.
+
+For an explicit subscription list:
+
 ```powershell
 pwsh ./Get-AzureBlobBackupEstimate.ps1 `
   -SubscriptionId "<subscription-id-1>","<subscription-id-2>" `
@@ -114,7 +144,9 @@ pwsh ./Get-AzureBlobBackupEstimate.ps1 `
 
 | Parameter | Required | Default | Description |
 |---|:---:|---|---|
-| `SubscriptionId` | Yes | — | One or more explicit subscription IDs |
+| `SubscriptionId` | No | Interactive picker | One or more explicit subscription IDs |
+| `AllEnabledSubscriptions` | No | Off | Selects every enabled subscription in the active tenant without prompting |
+| `SubscriptionFile` | No | Beside script | Private JSON manifest loaded automatically or created by the interactive picker |
 | `AccountNamePrefix` | No | All accounts | Case-insensitive storage-account prefix |
 | `ExpectedAccountCount` | No | `0` | Stops on count mismatch; `0` disables the check |
 | `RetentionDays` | No | `10,33` | Daily recovery-point retention scenarios |
