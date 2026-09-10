@@ -644,7 +644,22 @@ if ($ExpectedAccountCount -gt 0 -and $accounts.Count -ne $ExpectedAccountCount) 
 }
 
 foreach ($account in $accounts) {
-    if (-not $account.blobEndpoint) {
+    $blobEndpointProperty = $account.PSObject.Properties["blobEndpoint"]
+    $blobEndpoint = if ($blobEndpointProperty) {
+        [string]$blobEndpointProperty.Value
+    }
+    else {
+        ""
+    }
+    $isHnsEnabledProperty = $account.PSObject.Properties["isHnsEnabled"]
+    $isHnsEnabled = if ($isHnsEnabledProperty) {
+        [bool]$isHnsEnabledProperty.Value
+    }
+    else {
+        $false
+    }
+
+    if (-not $blobEndpoint) {
         $details = (
             Invoke-AzCli @(
                 "storage", "account", "show",
@@ -653,9 +668,21 @@ foreach ($account in $accounts) {
                 "--only-show-errors"
             )
         ) | ConvertFrom-Json
-        $account.blobEndpoint = [string]$details.primaryEndpoints.blob
-        $account.isHnsEnabled = [bool]$details.isHnsEnabled
+        $primaryEndpointsProperty = $details.PSObject.Properties["primaryEndpoints"]
+        if ($primaryEndpointsProperty -and $primaryEndpointsProperty.Value) {
+            $detailsBlobProperty = $primaryEndpointsProperty.Value.PSObject.Properties["blob"]
+            if ($detailsBlobProperty) {
+                $blobEndpoint = [string]$detailsBlobProperty.Value
+            }
+        }
+        $detailsHnsProperty = $details.PSObject.Properties["isHnsEnabled"]
+        if ($detailsHnsProperty) {
+            $isHnsEnabled = [bool]$detailsHnsProperty.Value
+        }
     }
+
+    $account | Add-Member -NotePropertyName blobEndpoint -NotePropertyValue $blobEndpoint -Force
+    $account | Add-Member -NotePropertyName isHnsEnabled -NotePropertyValue $isHnsEnabled -Force
 }
 
 Write-Host "Discovered $($accounts.Count) matching storage accounts."
@@ -664,6 +691,9 @@ $preflight = [System.Collections.Generic.List[object]]::new()
 foreach ($account in $accounts) {
     Write-Host "Preflight: $($account.name)"
     try {
+        if (-not $account.blobEndpoint) {
+            throw "Storage account '$($account.name)' does not expose a Blob service endpoint."
+        }
         $null = @(Get-Containers -BlobEndpoint $account.blobEndpoint -OneOnly)
         $preflight.Add([pscustomobject]@{
             SubscriptionId = $account.subscriptionId
