@@ -52,6 +52,12 @@ flowchart LR
 - An authenticated Azure CLI session
 - Network and DNS connectivity to storage private endpoints, when applicable
 
+At startup, the script checks the public GitHub `main` branch for a newer
+release. A newer copy is downloaded, syntax-validated, installed over the local
+script, and restarted with the same parameters. If GitHub is temporarily
+unreachable, the current release continues with an explicit warning. Use
+`-SkipUpdateCheck` for offline or intentionally pinned runs.
+
 Azure Cloud Shell supports the preflight and smaller assessments. For large
 estates, use a persistent PowerShell 7 host because a full metadata inventory
 can outlast a Cloud Shell session. Rerunning with the same output directory
@@ -156,6 +162,7 @@ pwsh ./Get-AzureBlobBackupEstimate.ps1 `
 | `PreflightOnly` | One mode required | — | Tests access and connectivity only |
 | `FullScan` | One mode required | — | Performs enumeration and cost modeling |
 | `Force` | No | Off | Rescans accounts with successful checkpoints |
+| `SkipUpdateCheck` | No | Off | Runs the local script without checking GitHub for a newer release |
 
 ## Cost model
 

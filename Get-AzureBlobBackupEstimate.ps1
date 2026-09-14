@@ -60,12 +60,79 @@ param(
     [string]$OutputDirectory = (Join-Path (Get-Location) ("Azure-blob-backup-assessment-{0}" -f (Get-Date -Format "yyyyMMdd-HHmmss"))),
     [switch]$PreflightOnly,
     [switch]$FullScan,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$SkipUpdateCheck
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$script:ReleaseVersion = "2026.09.14.1"
+
+function Update-EstimatorScript {
+    if ($SkipUpdateCheck -or -not $PSCommandPath) {
+        return $false
+    }
+
+    $sourceUri = "https://raw.githubusercontent.com/dereksix/azure-blob-backup-estimator/main/Get-AzureBlobBackupEstimate.ps1"
+    try {
+        $latestContent = (Invoke-WebRequest -Uri $sourceUri -TimeoutSec 30 -UseBasicParsing).Content
+    }
+    catch {
+        Write-Warning "Unable to check GitHub for estimator updates. Continuing with release $script:ReleaseVersion. Error: $($_.Exception.Message)"
+        return $false
+    }
+
+    $versionMatch = [regex]::Match(
+        $latestContent,
+        '(?m)^\$script:ReleaseVersion\s*=\s*"(?<version>[^"]+)"\s*$'
+    )
+    if (-not $versionMatch.Success) {
+        throw "The GitHub copy doesn't contain a valid estimator release version. The local script was not changed."
+    }
+
+    $latestVersion = $versionMatch.Groups["version"].Value
+    if ($latestVersion -eq $script:ReleaseVersion) {
+        return $false
+    }
+
+    $temporaryPath = "$PSCommandPath.update-$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [IO.File]::WriteAllText(
+            $temporaryPath,
+            $latestContent,
+            [Text.UTF8Encoding]::new($false)
+        )
+        $tokens = $null
+        $parseErrors = $null
+        [Management.Automation.Language.Parser]::ParseFile(
+            $temporaryPath,
+            [ref]$tokens,
+            [ref]$parseErrors
+        ) | Out-Null
+        if ($parseErrors.Count -gt 0) {
+            throw "The downloaded estimator failed PowerShell syntax validation: $($parseErrors[0].Message)"
+        }
+
+        Move-Item -LiteralPath $temporaryPath -Destination $PSCommandPath -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host "Updated estimator from release $script:ReleaseVersion to $latestVersion. Restarting with the same parameters."
+    return $true
+}
+
+if (Update-EstimatorScript) {
+    $restartParameters = @{}
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+        $restartParameters[$entry.Key] = $entry.Value
+    }
+    $restartParameters["SkipUpdateCheck"] = $true
+    & $PSCommandPath @restartParameters
+    return
+}
 
 if ($PreflightOnly -and $FullScan) {
     throw "Use either -PreflightOnly or -FullScan, not both."
